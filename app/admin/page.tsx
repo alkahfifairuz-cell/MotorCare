@@ -288,6 +288,7 @@ export default function AdminPage() {
   const [motorRows, setMotorRows] = useState<MotorRecord[]>([]);
   const [motorLoading, setMotorLoading] = useState(true);
   const [motorModalOpen, setMotorModalOpen] = useState(false);
+  const [editingMotorId, setEditingMotorId] = useState<string | null>(null);
   const [motorSaving, setMotorSaving] = useState(false);
   const [motorFormError, setMotorFormError] = useState("");
   const [motorForm, setMotorForm] = useState({
@@ -303,6 +304,7 @@ export default function AdminPage() {
   const [scheduleRows, setScheduleRows] = useState<ScheduleRecord[]>([]);
   const [scheduleLoading, setScheduleLoading] = useState(true);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [scheduleFormError, setScheduleFormError] = useState("");
   const [scheduleForm, setScheduleForm] = useState({
@@ -317,6 +319,7 @@ export default function AdminPage() {
   const [maintenanceRows, setMaintenanceRows] = useState<MaintenanceRecord[]>([]);
   const [maintenanceLoading, setMaintenanceLoading] = useState(true);
   const [maintenanceModalOpen, setMaintenanceModalOpen] = useState(false);
+  const [editingMaintenanceId, setEditingMaintenanceId] = useState<string | null>(null);
   const [maintenanceSaving, setMaintenanceSaving] = useState(false);
   const [maintenanceFormError, setMaintenanceFormError] = useState("");
   const [maintenanceForm, setMaintenanceForm] = useState({
@@ -353,11 +356,9 @@ export default function AdminPage() {
 
   const [paymentRows, setPaymentRows] = useState<PaymentRecord[]>([]);
   const [historyRows, setHistoryRows] = useState<HistoryRecord[]>([]);
-  const [dashboardFilter, setDashboardFilter] = useState<"today" | "week" | "month" | "custom">("month");
-  const [dashboardCustomStart, setDashboardCustomStart] = useState("");
-  const [dashboardCustomEnd, setDashboardCustomEnd] = useState("");
   const [paymentLoading, setPaymentLoading] = useState(true);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [editingPaymentId, setEditingPaymentId] = useState<string | null>(null);
   const [paymentSaving, setPaymentSaving] = useState(false);
   const [paymentFormError, setPaymentFormError] = useState("");
   const [paymentForm, setPaymentForm] = useState({
@@ -374,6 +375,7 @@ export default function AdminPage() {
 
   const [ownerLoading, setOwnerLoading] = useState(true);
   const [ownerModalOpen, setOwnerModalOpen] = useState(false);
+  const [editingOwnerId, setEditingOwnerId] = useState<string | null>(null);
   const [selectedOwner, setSelectedOwner] = useState<OwnerRecord | null>(null);
   const [ownerSaving, setOwnerSaving] = useState(false);
   const [ownerFormError, setOwnerFormError] = useState("");
@@ -631,6 +633,23 @@ export default function AdminPage() {
     }
   }
 
+  async function deleteProduct(product: ProductRecord) {
+    if (!window.confirm(`Hapus permanen ${product.name}? Data penggunaan produk yang sudah tercatat juga akan dihapus.`)) return;
+    try {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { window.location.replace("/admin/login"); return; }
+      const { error: usageError } = await supabase.from("product_usage").delete().eq("product_id", product.id);
+      if (usageError) throw usageError;
+      const { error } = await supabase.from("products").delete().eq("id", product.id);
+      if (error) throw error;
+      await Promise.all([loadProducts(), loadHistory()]);
+    } catch (error) {
+      setSupabaseError(error instanceof Error ? error.message : "Gagal menghapus produk.");
+      setSupabaseStatus("error");
+    }
+  }
+
   async function saveProduct() {
     if (!productForm.name.trim()) {
       setProductFormError("Nama produk/alat wajib diisi.");
@@ -727,15 +746,16 @@ export default function AdminPage() {
     }
   }
 
-  function openPaymentModal() {
+  function openPaymentModal(payment?: PaymentRecord) {
+    setEditingPaymentId(payment?.id ?? null);
     setPaymentForm({
-      owner_id: ownerRows[0]?.id ?? "",
-      period: new Date().toISOString().slice(0, 7),
-      amount: "",
-      status: "Paid",
-      paid_at: new Date().toISOString().slice(0, 10),
-      payment_method: "Transfer",
-      admin_notes: "",
+      owner_id: payment?.owner_id ?? ownerRows[0]?.id ?? "",
+      period: payment?.period ?? new Date().toISOString().slice(0, 7),
+      amount: payment ? String(payment.amount) : "",
+      status: payment?.status ?? "Paid",
+      paid_at: payment?.paid_at ?? new Date().toISOString().slice(0, 10),
+      payment_method: payment?.payment_method ?? "Transfer",
+      admin_notes: payment?.admin_notes ?? "",
     });
     setPaymentFormError("");
     setPaymentModalOpen(true);
@@ -744,6 +764,7 @@ export default function AdminPage() {
   function closePaymentModal() {
     if (paymentSaving) return;
     setPaymentModalOpen(false);
+    setEditingPaymentId(null);
     setPaymentFormError("");
   }
 
@@ -767,7 +788,7 @@ export default function AdminPage() {
       const supabase = createClient();
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { window.location.replace("/admin/login"); return; }
-      const { error } = await supabase.from("payments").insert({
+      const paymentPayload = {
         owner_id: paymentForm.owner_id,
         period: paymentForm.period,
         amount,
@@ -775,14 +796,32 @@ export default function AdminPage() {
         paid_at: paymentForm.status === "Paid" ? (paymentForm.paid_at || null) : null,
         payment_method: paymentForm.payment_method,
         admin_notes: paymentForm.admin_notes.trim() || null,
-      });
+      };
+      const { error } = editingPaymentId
+        ? await supabase.from("payments").update(paymentPayload).eq("id", editingPaymentId)
+        : await supabase.from("payments").insert(paymentPayload);
       if (error) { setPaymentFormError(getSupabaseError(error)); return; }
       closePaymentModal();
-      await loadPayments();
+      await Promise.all([loadPayments(), loadHistory()]);
     } catch (error) {
       setPaymentFormError(error instanceof Error ? error.message : "Gagal menyimpan pembayaran.");
     } finally {
       setPaymentSaving(false);
+    }
+  }
+
+  async function deletePayment(payment: PaymentRecord) {
+    if (!window.confirm(`Hapus pembayaran ${formatRupiah(payment.amount)} untuk ${ownerRows.find((x) => x.id === payment.owner_id)?.name || "pemilik"}?`)) return;
+    try {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { window.location.replace("/admin/login"); return; }
+      const { error } = await supabase.from("payments").delete().eq("id", payment.id);
+      if (error) throw error;
+      await Promise.all([loadPayments(), loadHistory()]);
+    } catch (error) {
+      setSupabaseError(error instanceof Error ? error.message : "Gagal menghapus pembayaran.");
+      setSupabaseStatus("error");
     }
   }
 
@@ -842,16 +881,17 @@ export default function AdminPage() {
     setSelectedOwner(null);
   }
 
-  function openMotorModal() {
+  function openMotorModal(motor?: MotorRecord) {
+    setEditingMotorId(motor?.id ?? null);
     setMotorForm({
-      owner_id: ownerRows[0]?.id ?? "",
-      name: "",
-      brand: "",
-      model: "",
-      plate_number: "",
-      year: "",
-      color: "",
-      notes: "",
+      owner_id: motor?.owner_id ?? ownerRows[0]?.id ?? "",
+      name: motor?.name ?? "",
+      brand: motor?.brand === "-" ? "" : motor?.brand ?? "",
+      model: motor?.model === "-" ? "" : motor?.model ?? "",
+      plate_number: motor?.plate_number === "-" ? "" : motor?.plate_number ?? "",
+      year: motor?.year === "-" ? "" : motor?.year ?? "",
+      color: motor?.color === "-" ? "" : motor?.color ?? "",
+      notes: motor?.notes ?? "",
     });
     setMotorFormError("");
     setMotorModalOpen(true);
@@ -860,6 +900,7 @@ export default function AdminPage() {
   function closeMotorModal() {
     if (motorSaving) return;
     setMotorModalOpen(false);
+    setEditingMotorId(null);
     setMotorFormError("");
   }
 
@@ -909,12 +950,17 @@ export default function AdminPage() {
         return;
       }
 
-      if ((count ?? 0) >= 2) {
-        setMotorFormError("Pemilik ini sudah memiliki 2 motor. Batas maksimalnya 2 motor per pemilik.");
+      const isChangingOwner = Boolean(editingMotorId && motorRows.find((row) => row.id === editingMotorId)?.owner_id !== motorForm.owner_id);
+      if (!editingMotorId && (count ?? 0) >= 5) {
+        setMotorFormError("Pemilik ini sudah mencapai batas 5 motor.");
+        return;
+      }
+      if (editingMotorId && isChangingOwner && (count ?? 0) >= 5) {
+        setMotorFormError("Pemilik tujuan sudah mencapai batas 5 motor.");
         return;
       }
 
-      const { error } = await supabase.from("motors").insert({
+      const payload = {
         owner_id: motorForm.owner_id,
         name: motorForm.name.trim(),
         brand: motorForm.brand.trim() || null,
@@ -925,7 +971,11 @@ export default function AdminPage() {
         notes: motorForm.notes.trim() || null,
         is_active: true,
         is_public: true,
-      });
+      };
+
+      const { error } = editingMotorId
+        ? await supabase.from("motors").update(payload).eq("id", editingMotorId)
+        : await supabase.from("motors").insert(payload);
 
       if (error) {
         setMotorFormError(getSupabaseError(error));
@@ -933,7 +983,8 @@ export default function AdminPage() {
       }
 
       setMotorModalOpen(false);
-      await loadMotors();
+      setEditingMotorId(null);
+      await Promise.all([loadMotors(), loadOwners(), loadHistory()]);
     } catch (error) {
       setMotorFormError(error instanceof Error ? error.message : "Gagal menyimpan motor.");
     } finally {
@@ -992,15 +1043,16 @@ export default function AdminPage() {
     return date.toISOString().slice(0, 10);
   }
 
-  function openMaintenanceModal() {
+  function openMaintenanceModal(maintenance?: MaintenanceRecord) {
+    setEditingMaintenanceId(maintenance?.id ?? null);
     setMaintenanceForm({
-      motor_id: motorRows[0]?.id ?? "",
-      schedule_id: "",
-      date: new Date().toISOString().slice(0, 10),
-      start_time: "09:00",
-      end_time: "09:45",
-      status: "Selesai",
-      notes: "",
+      motor_id: maintenance?.motor_id ?? motorRows[0]?.id ?? "",
+      schedule_id: maintenance?.schedule_id ?? "",
+      date: maintenance?.date ?? new Date().toISOString().slice(0, 10),
+      start_time: maintenance?.start_time === "-" ? "09:00" : maintenance?.start_time ?? "09:00",
+      end_time: maintenance?.end_time === "-" ? "09:45" : maintenance?.end_time ?? "09:45",
+      status: maintenance?.status ?? "Selesai",
+      notes: maintenance?.notes ?? "",
     });
     setMaintenanceFormError("");
     setUsageDraft({});
@@ -1010,6 +1062,7 @@ export default function AdminPage() {
   function closeMaintenanceModal() {
     if (maintenanceSaving) return;
     setMaintenanceModalOpen(false);
+    setEditingMaintenanceId(null);
     setMaintenanceFormError("");
   }
 
@@ -1039,7 +1092,7 @@ export default function AdminPage() {
         return;
       }
 
-      const { data: maintenanceData, error } = await supabase.from("maintenance_records").insert({
+      const maintenancePayload = {
         motor_id: maintenanceForm.motor_id,
         schedule_id: maintenanceForm.schedule_id || null,
         date: maintenanceForm.date,
@@ -1047,7 +1100,14 @@ export default function AdminPage() {
         end_time: maintenanceForm.end_time,
         status: maintenanceForm.status,
         notes: maintenanceForm.notes.trim() || null,
-      }).select("id").single();
+      };
+
+      const maintenanceQuery = editingMaintenanceId
+        ? await supabase.from("maintenance_records").update(maintenancePayload).eq("id", editingMaintenanceId).select("id").single()
+        : await supabase.from("maintenance_records").insert(maintenancePayload).select("id").single();
+
+      const maintenanceData = maintenanceQuery.data;
+      const error = maintenanceQuery.error;
 
       if (error) {
         setMaintenanceFormError(getSupabaseError(error));
@@ -1058,7 +1118,7 @@ export default function AdminPage() {
         .map(([product_id, quantity]) => ({ product_id, quantity: Number(quantity) }))
         .filter((item) => Number.isInteger(item.quantity) && item.quantity > 0);
 
-      if (maintenanceData?.id && usageItems.length > 0) {
+      if (!editingMaintenanceId && maintenanceData?.id && usageItems.length > 0) {
         for (const item of usageItems) {
           const product = productRows.find((row) => row.id === item.product_id);
           if (!product) continue;
@@ -1117,13 +1177,31 @@ export default function AdminPage() {
       }
 
       setMaintenanceModalOpen(false);
-      await loadMaintenance();
+      setEditingMaintenanceId(null);
+      await Promise.all([loadMaintenance(), loadProducts(), loadSchedules(), loadHistory()]);
       await loadProducts();
       await loadSchedules();
     } catch (error) {
       setMaintenanceFormError(error instanceof Error ? error.message : "Gagal menyimpan perawatan.");
     } finally {
       setMaintenanceSaving(false);
+    }
+  }
+
+  async function deleteMaintenance(item: MaintenanceRecord) {
+    if (!window.confirm(`Hapus riwayat perawatan tanggal ${item.date}?`)) return;
+    try {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { window.location.replace("/admin/login"); return; }
+      const { error: usageError } = await supabase.from("product_usage").delete().eq("maintenance_id", item.id);
+      if (usageError) throw usageError;
+      const { error } = await supabase.from("maintenance_records").delete().eq("id", item.id);
+      if (error) throw error;
+      await Promise.all([loadMaintenance(), loadHistory()]);
+    } catch (error) {
+      setSupabaseError(error instanceof Error ? error.message : "Gagal menghapus riwayat perawatan.");
+      setSupabaseStatus("error");
     }
   }
 
@@ -1166,14 +1244,15 @@ export default function AdminPage() {
     }
   }
 
-  function openScheduleModal() {
+  function openScheduleModal(schedule?: ScheduleRecord) {
+    setEditingScheduleId(schedule?.id ?? null);
     setScheduleForm({
-      motor_id: motorRows[0]?.id ?? "",
-      frequency: "weekly",
-      day_of_week: "1",
-      time: "09:00",
-      service_type: "Full Wash",
-      next_date: new Date().toISOString().slice(0, 10),
+      motor_id: schedule?.motor_id ?? motorRows[0]?.id ?? "",
+      frequency: schedule?.frequency ?? "weekly",
+      day_of_week: schedule?.day_of_week === "-" ? "1" : schedule?.day_of_week ?? "1",
+      time: schedule?.time === "-" ? "09:00" : schedule?.time ?? "09:00",
+      service_type: schedule?.service_type === "-" ? "Full Wash" : schedule?.service_type ?? "Full Wash",
+      next_date: schedule?.next_date ?? new Date().toISOString().slice(0, 10),
     });
     setScheduleFormError("");
     setScheduleModalOpen(true);
@@ -1182,6 +1261,7 @@ export default function AdminPage() {
   function closeScheduleModal() {
     if (scheduleSaving) return;
     setScheduleModalOpen(false);
+    setEditingScheduleId(null);
     setScheduleFormError("");
   }
 
@@ -1217,7 +1297,9 @@ export default function AdminPage() {
         next_date: scheduleForm.next_date,
       };
 
-      const { error } = await supabase.from("schedules").insert(payload);
+      const { error } = editingScheduleId
+        ? await supabase.from("schedules").update(payload).eq("id", editingScheduleId)
+        : await supabase.from("schedules").insert(payload);
 
       if (error) {
         setScheduleFormError(getSupabaseError(error));
@@ -1225,11 +1307,27 @@ export default function AdminPage() {
       }
 
       setScheduleModalOpen(false);
-      await loadSchedules();
+      setEditingScheduleId(null);
+      await Promise.all([loadSchedules(), loadHistory()]);
     } catch (error) {
       setScheduleFormError(error instanceof Error ? error.message : "Gagal menyimpan jadwal.");
     } finally {
       setScheduleSaving(false);
+    }
+  }
+
+  async function deleteSchedule(schedule: ScheduleRecord) {
+    if (!window.confirm(`Hapus jadwal ${schedule.service_type}?`)) return;
+    try {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { window.location.replace("/admin/login"); return; }
+      const { error } = await supabase.from("schedules").delete().eq("id", schedule.id);
+      if (error) throw error;
+      await Promise.all([loadSchedules(), loadHistory()]);
+    } catch (error) {
+      setSupabaseError(error instanceof Error ? error.message : "Gagal menghapus jadwal.");
+      setSupabaseStatus("error");
     }
   }
 
@@ -1508,13 +1606,19 @@ export default function AdminPage() {
     };
   }, [authChecking]);
 
-  function openOwnerModal() {
-    setOwnerForm({
-      name: "",
-      phone: "",
-      address: "",
-      notes: "",
-    });
+  function openOwnerModal(owner?: OwnerRecord) {
+    if (owner) {
+      setEditingOwnerId(owner.id);
+      setOwnerForm({
+        name: owner.name,
+        phone: owner.phone === "-" ? "" : owner.phone,
+        address: owner.address === "-" ? "" : owner.address,
+        notes: owner.notes,
+      });
+    } else {
+      setEditingOwnerId(null);
+      setOwnerForm({ name: "", phone: "", address: "", notes: "" });
+    }
     setOwnerFormError("");
     setOwnerModalOpen(true);
   }
@@ -1522,6 +1626,7 @@ export default function AdminPage() {
   function closeOwnerModal() {
     if (ownerSaving) return;
     setOwnerModalOpen(false);
+    setEditingOwnerId(null);
     setOwnerFormError("");
   }
 
@@ -1536,48 +1641,100 @@ export default function AdminPage() {
 
     try {
       const supabase = createClient();
-
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
+      const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
-        setOwnerFormError(
-          "Belum login sebagai admin. Login Supabase diperlukan untuk menambah data."
-        );
+        window.location.replace("/admin/login");
         return;
       }
 
-      const { error } = await supabase.from("owners").insert({
+      const payload = {
         name: ownerForm.name.trim(),
         phone: ownerForm.phone.trim() || null,
         address: ownerForm.address.trim() || null,
         notes: ownerForm.notes.trim() || null,
         is_public: true,
-      });
+      };
 
-      if (error) {
-        setOwnerFormError(getSupabaseError(error));
+      const result = editingOwnerId
+        ? await supabase.from("owners").update(payload).eq("id", editingOwnerId)
+        : await supabase.from("owners").insert(payload);
+
+      if (result.error) {
+        setOwnerFormError(getSupabaseError(result.error));
         return;
       }
 
-      setOwnerModalOpen(false);
-      setOwnerForm({
-        name: "",
-        phone: "",
-        address: "",
-        notes: "",
-      });
-
+      closeOwnerModal();
       await loadOwners();
     } catch (error) {
-      setOwnerFormError(
-        error instanceof Error
-          ? error.message
-          : "Gagal menyimpan pemilik."
-      );
+      setOwnerFormError(error instanceof Error ? error.message : "Gagal menyimpan pemilik.");
     } finally {
       setOwnerSaving(false);
+    }
+  }
+
+  async function deleteOwner(owner: OwnerRecord) {
+    const motorCount = motorRows.filter((motor) => motor.owner_id === owner.id).length;
+    if (!window.confirm(`Hapus pemilik ${owner.name}?${motorCount ? ` ${motorCount} motor, jadwal, perawatan, dan data terkait juga akan dihapus.` : ""}`)) return;
+
+    try {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { window.location.replace("/admin/login"); return; }
+
+      const ownerMotors = motorRows.filter((motor) => motor.owner_id === owner.id);
+      for (const motor of ownerMotors) {
+        const { data: maints, error: maintFetchError } = await supabase
+          .from("maintenance_records").select("id").eq("motor_id", motor.id);
+        if (maintFetchError) throw maintFetchError;
+        const maintenanceIds = (maints ?? []).map((x) => x.id);
+        if (maintenanceIds.length) {
+          const { error } = await supabase.from("product_usage").delete().in("maintenance_id", maintenanceIds);
+          if (error) throw error;
+          const { error: e2 } = await supabase.from("maintenance_records").delete().eq("motor_id", motor.id);
+          if (e2) throw e2;
+        }
+        const { error: e3 } = await supabase.from("schedules").delete().eq("motor_id", motor.id);
+        if (e3) throw e3;
+        const { error: e4 } = await supabase.from("motors").delete().eq("id", motor.id);
+        if (e4) throw e4;
+      }
+      const { error: paymentError } = await supabase.from("payments").delete().eq("owner_id", owner.id);
+      if (paymentError) throw paymentError;
+      const { error: ownerError } = await supabase.from("owners").delete().eq("id", owner.id);
+      if (ownerError) throw ownerError;
+
+      setSelectedOwner(null);
+      await Promise.all([loadOwners(), loadMotors(), loadSchedules(), loadMaintenance(), loadPayments(), loadHistory()]);
+    } catch (error) {
+      setSupabaseError(error instanceof Error ? error.message : "Gagal menghapus pemilik.");
+      setSupabaseStatus("error");
+    }
+  }
+
+  async function deleteMotor(motor: MotorRecord) {
+    if (!window.confirm(`Hapus motor ${motor.name}? Jadwal, riwayat perawatan, dan penggunaan produk terkait akan ikut dihapus.`)) return;
+    try {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { window.location.replace("/admin/login"); return; }
+      const { data: maints, error: maintFetchError } = await supabase.from("maintenance_records").select("id").eq("motor_id", motor.id);
+      if (maintFetchError) throw maintFetchError;
+      const maintenanceIds = (maints ?? []).map((x) => x.id);
+      if (maintenanceIds.length) {
+        const { error } = await supabase.from("product_usage").delete().in("maintenance_id", maintenanceIds);
+        if (error) throw error;
+        const { error: e2 } = await supabase.from("maintenance_records").delete().eq("motor_id", motor.id);
+        if (e2) throw e2;
+      }
+      const { error: e3 } = await supabase.from("schedules").delete().eq("motor_id", motor.id);
+      if (e3) throw e3;
+      const { error: e4 } = await supabase.from("motors").delete().eq("id", motor.id);
+      if (e4) throw e4;
+      await Promise.all([loadMotors(), loadOwners(), loadSchedules(), loadMaintenance(), loadHistory()]);
+    } catch (error) {
+      setSupabaseError(error instanceof Error ? error.message : "Gagal menghapus motor.");
+      setSupabaseStatus("error");
     }
   }
 
@@ -1590,70 +1747,17 @@ export default function AdminPage() {
     dashboardNow.getMonth() + 1,
   ).padStart(2, "0")}`;
 
-  function dashboardDateKey(date: Date) {
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
-      date.getDate(),
-    ).padStart(2, "0")}`;
-  }
-
-  const dashboardWeekStartDate = new Date(dashboardNow);
-  const dayOfWeek = dashboardWeekStartDate.getDay();
-  const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-  dashboardWeekStartDate.setDate(dashboardWeekStartDate.getDate() + diffToMonday);
-
-  const dashboardWeekEndDate = new Date(dashboardWeekStartDate);
-  dashboardWeekEndDate.setDate(dashboardWeekEndDate.getDate() + 6);
-
-  const dashboardDefaultStart =
-    dashboardFilter === "today"
-      ? dashboardToday
-      : dashboardFilter === "week"
-        ? dashboardDateKey(dashboardWeekStartDate)
-        : dashboardFilter === "month"
-          ? `${dashboardMonth}-01`
-          : dashboardCustomStart || dashboardToday;
-
-  const dashboardDefaultEnd =
-    dashboardFilter === "today"
-      ? dashboardToday
-      : dashboardFilter === "week"
-        ? dashboardDateKey(dashboardWeekEndDate)
-        : dashboardFilter === "month"
-          ? dashboardDateKey(new Date(dashboardNow.getFullYear(), dashboardNow.getMonth() + 1, 0))
-          : dashboardCustomEnd || dashboardToday;
-
-  const dashboardRangeStart =
-    dashboardDefaultStart <= dashboardDefaultEnd
-      ? dashboardDefaultStart
-      : dashboardDefaultEnd;
-  const dashboardRangeEnd =
-    dashboardDefaultStart <= dashboardDefaultEnd
-      ? dashboardDefaultEnd
-      : dashboardDefaultStart;
-
-  const dashboardInRange = (date: string | null | undefined) => {
-    if (!date) return false;
-    const key = date.slice(0, 10);
-    return key >= dashboardRangeStart && key <= dashboardRangeEnd;
-  };
-
   const dashboardTodaySchedules = scheduleRows
     .filter(
       (schedule) =>
-        schedule.is_active &&
-        schedule.next_date >= dashboardRangeStart &&
-        schedule.next_date <= dashboardRangeEnd,
+        schedule.is_active && schedule.next_date === dashboardToday,
     )
-    .sort((a, b) => {
-      const dateCompare = a.next_date.localeCompare(b.next_date);
-      return dateCompare !== 0 ? dateCompare : a.time.localeCompare(b.time);
-    });
+    .sort((a, b) => a.time.localeCompare(b.time));
 
   const dashboardPaidThisMonth = paymentRows.filter((payment) => {
     const status = payment.status.toLowerCase();
-    const paymentDate = payment.paid_at || `${payment.period}-01`;
     return (
-      dashboardInRange(paymentDate) &&
+      payment.period === dashboardMonth &&
       (status === "paid" ||
         status === "lunas" ||
         status === "selesai")
@@ -1668,7 +1772,7 @@ export default function AdminPage() {
   const dashboardPendingPayments = paymentRows.filter((payment) => {
     const status = payment.status.toLowerCase();
     return (
-      dashboardInRange(payment.paid_at || `${payment.period}-01`) &&
+      payment.period === dashboardMonth &&
       (status === "pending" ||
         status === "unpaid" ||
         status === "belum bayar" ||
@@ -1676,9 +1780,9 @@ export default function AdminPage() {
     );
   }).length;
 
-  const dashboardMaintenanceThisMonth = maintenanceRows.filter((item) =>
-    dashboardInRange(item.date),
-  ).length;
+  const dashboardMaintenanceThisMonth = maintenanceRows.filter((item) => {
+    return item.date.startsWith(dashboardMonth);
+  }).length;
 
   const dashboardLowStock = productRows.filter(
     (product) =>
@@ -1688,60 +1792,34 @@ export default function AdminPage() {
   );
 
   const dashboardTimeline = [
-    ...maintenanceRows
-      .filter((item) => dashboardInRange(item.date))
-      .map((item) => ({
-        id: `maintenance-${item.id}`,
-        timestamp: `${item.date}T${item.start_time || "00:00"}`,
-        title: "Perawatan selesai",
-        detail: `${
-          motorRows.find((motor) => motor.id === item.motor_id)?.name ||
-          motorRows.find((motor) => motor.id === item.motor_id)?.model ||
-          "Motor"
-        } · ${item.notes?.trim() || "Maintenance"}`,
-        type: "Maintenance",
-      })),
-    ...paymentRows
-      .filter((item) =>
-        dashboardInRange(item.paid_at || `${item.period}-01`),
-      )
-      .map((item) => ({
-        id: `payment-${item.id}`,
-        timestamp: `${item.paid_at || `${item.period}-01`}T12:00`,
-        title: "Pembayaran tercatat",
-        detail: `${
-          ownerRows.find((owner) => owner.id === item.owner_id)?.name ||
-          "Pemilik"
-        } · ${formatRupiah(Number(item.amount || 0))}`,
-        type: "Payment",
-      })),
-    ...scheduleRows
-      .filter((item) => dashboardInRange(item.created_at))
-      .map((item) => ({
-        id: `schedule-${item.id}`,
-        timestamp: item.created_at,
-        title: "Jadwal dibuat",
-        detail: `${
-          motorRows.find((motor) => motor.id === item.motor_id)?.name ||
-          "Motor"
-        } · ${item.service_type || "Motor Care"}`,
-        type: "Schedule",
-      })),
+    ...maintenanceRows.map((item) => ({
+      id: `maintenance-${item.id}`,
+      timestamp: `${item.date}T${item.start_time || "00:00"}`,
+      title: "Perawatan selesai",
+      detail: `${
+        motorRows.find((motor) => motor.id === item.motor_id)?.name ||
+        motorRows.find((motor) => motor.id === item.motor_id)?.model ||
+        "Motor"
+      } · ${item.notes?.trim() || "Maintenance"}`,
+      type: "Maintenance",
+    })),
+    ...paymentRows.map((item) => ({
+      id: `payment-${item.id}`,
+      timestamp: `${item.paid_at || `${item.period}-01`}T12:00`,
+      title: "Pembayaran tercatat",
+      detail: `${
+        ownerRows.find((owner) => owner.id === item.owner_id)?.name ||
+        "Pemilik"
+      } · ${formatRupiah(Number(item.amount || 0))}`,
+      type: "Payment",
+    })),
   ]
     .sort(
       (a, b) =>
-        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+        new Date(b.timestamp).getTime() -
+        new Date(a.timestamp).getTime(),
     )
     .slice(0, 5);
-
-  const dashboardFilterLabel =
-    dashboardFilter === "today"
-      ? "Hari ini"
-      : dashboardFilter === "week"
-        ? "Minggu ini"
-        : dashboardFilter === "month"
-          ? "Bulan ini"
-          : "Custom";
 
   const dashboardDateLabel = new Intl.DateTimeFormat("id-ID", {
     weekday: "long",
@@ -1999,69 +2077,27 @@ export default function AdminPage() {
                     </h2>
 
                     <p className="mt-2 text-sm text-white/30">
-                      Pantau aktivitas MotorCare berdasarkan periode yang dipilih.
+                      Pantau seluruh aktivitas MotorCare hari ini.
                     </p>
                   </div>
 
-                  <div className="flex flex-col items-stretch gap-3 sm:items-end">
-                    <div className="flex flex-wrap items-center justify-end gap-1 rounded-2xl border border-white/[0.07] bg-white/[0.02] p-1">
-                      {([
-                        ["today", "Hari ini"],
-                        ["week", "Minggu ini"],
-                        ["month", "Bulan ini"],
-                        ["custom", "Custom"],
-                      ] as const).map(([value, label]) => (
-                        <button
-                          key={value}
-                          type="button"
-                          onClick={() => setDashboardFilter(value)}
-                          className={`rounded-xl px-3 py-2 text-[9px] font-semibold transition ${
-                            dashboardFilter === value
-                              ? "bg-white/[0.09] text-white"
-                              : "text-white/30 hover:bg-white/[0.04] hover:text-white/60"
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-
-                    {dashboardFilter === "custom" && (
-                      <div className="flex flex-wrap items-center justify-end gap-2">
-                        <input
-                          type="date"
-                          value={dashboardCustomStart}
-                          onChange={(event) => setDashboardCustomStart(event.target.value)}
-                          className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-[10px] text-white outline-none"
-                        />
-                        <span className="text-[9px] text-white/20">s/d</span>
-                        <input
-                          type="date"
-                          value={dashboardCustomEnd}
-                          onChange={(event) => setDashboardCustomEnd(event.target.value)}
-                          className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-[10px] text-white outline-none"
-                        />
-                      </div>
-                    )}
-
-                    <div className="flex items-center justify-end gap-2">
-                      <span
-                        className={`h-1.5 w-1.5 rounded-full ${
-                          realtimeStatus === "live"
-                            ? "bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.7)]"
-                            : realtimeStatus === "error"
-                              ? "bg-red-400"
-                              : "bg-blue-400"
-                        }`}
-                      />
-                      <span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-white/30">
-                        {realtimeStatus === "live"
-                          ? "Live database"
+                  <div className="flex items-center gap-2 rounded-full border border-white/[0.07] bg-white/[0.02] px-3 py-2">
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        realtimeStatus === "live"
+                          ? "bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.7)]"
                           : realtimeStatus === "error"
-                            ? "Sync error"
-                            : "Connecting"}
-                      </span>
-                    </div>
+                            ? "bg-red-400"
+                            : "bg-blue-400"
+                      }`}
+                    />
+                    <span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-white/30">
+                      {realtimeStatus === "live"
+                        ? "Live database"
+                        : realtimeStatus === "error"
+                          ? "Sync error"
+                          : "Connecting"}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -2081,13 +2117,13 @@ export default function AdminPage() {
                   ],
                   [
                     String(dashboardTodaySchedules.length).padStart(2, "0"),
-                    "Jadwal Periode",
-                    `${dashboardFilterLabel} · next date`,
+                    "Jadwal Hari Ini",
+                    "Next date hari ini",
                   ],
                   [
                     formatRupiah(dashboardPaidTotal),
-                    "Pembayaran Lunas",
-                    `${dashboardPaidThisMonth.length} pembayaran · ${dashboardFilterLabel}`,
+                    "Pembayaran Bulan Ini",
+                    `${dashboardPaidThisMonth.length} pembayaran lunas`,
                   ],
                 ].map(([value, label, caption]) => (
                   <div
@@ -2114,7 +2150,7 @@ export default function AdminPage() {
                 <Panel
                   eyebrow="Schedule"
                   title="Jadwal hari ini"
-                  action={dashboardFilterLabel}
+                  action="Lihat semua"
                 >
                   {scheduleLoading ? (
                     <div className="p-6 text-xs text-white/25">
@@ -2123,10 +2159,10 @@ export default function AdminPage() {
                   ) : dashboardTodaySchedules.length === 0 ? (
                     <div className="p-6">
                       <p className="text-sm font-semibold text-white/50">
-                        Tidak ada jadwal pada periode ini.
+                        Tidak ada jadwal hari ini.
                       </p>
                       <p className="mt-1 text-[10px] text-white/20">
-                        Jadwal aktif dengan next date pada periode terpilih akan muncul di sini.
+                        Jadwal dengan next date hari ini akan muncul otomatis.
                       </p>
                     </div>
                   ) : (
@@ -2186,7 +2222,7 @@ export default function AdminPage() {
                     </p>
 
                     <p className="mt-2 text-[10px] text-white/25">
-                      Total pembayaran lunas untuk {dashboardFilterLabel.toLowerCase()}.
+                      Total pembayaran lunas untuk {dashboardMonth}.
                     </p>
 
                     <div className="mt-5 h-2 overflow-hidden rounded-full bg-white/[0.06]">
@@ -2290,7 +2326,7 @@ export default function AdminPage() {
               <div className="mt-5 grid gap-3 sm:grid-cols-3">
                 <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-5">
                   <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-white/25">
-                    Perawatan Periode
+                    Perawatan Bulan Ini
                   </p>
                   <p className="mt-3 text-xl font-semibold">
                     {dashboardMaintenanceThisMonth}
@@ -2302,7 +2338,7 @@ export default function AdminPage() {
 
                 <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-5">
                   <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-white/25">
-                    Jadwal Periode
+                    Jadwal Aktif
                   </p>
                   <p className="mt-3 text-xl font-semibold">
                     {scheduleRows.filter((item) => item.is_active).length}
@@ -2334,7 +2370,7 @@ export default function AdminPage() {
               title="Pemilik"
               description="Kelola data pemilik dan motor yang mereka miliki."
               button="+ Tambah Pemilik"
-              onButtonClick={openOwnerModal}
+              onButtonClick={() => openOwnerModal()}
             >
               {ownerLoading ? (
                 <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-8 text-center text-sm text-white/30">
@@ -2353,7 +2389,7 @@ export default function AdminPage() {
                     MotorCare.
                   </p>
                   <button
-                    onClick={openOwnerModal}
+                    onClick={() => openOwnerModal()}
                     className="mt-5 rounded-full bg-white px-5 py-2.5 text-[10px] font-semibold text-[#080a0d] transition hover:bg-blue-100"
                   >
                     + Tambah Pemilik
@@ -2397,13 +2433,11 @@ export default function AdminPage() {
                         />
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => openOwnerDetail(owner)}
-                        className="mt-4 w-full rounded-xl border border-white/[0.07] bg-white/[0.02] py-2.5 text-[10px] font-semibold text-white/40 hover:bg-white/[0.05] hover:text-white"
-                      >
-                        Lihat detail →
-                      </button>
+                      <div className="mt-4 grid grid-cols-3 gap-2">
+                        <button type="button" onClick={() => openOwnerDetail(owner)} className="rounded-xl border border-white/[0.07] bg-white/[0.02] py-2.5 text-[9px] font-semibold text-white/40 hover:bg-white/[0.05] hover:text-white">Detail</button>
+                        <button type="button" onClick={() => openOwnerModal(owner)} className="rounded-xl border border-blue-300/10 bg-blue-300/[0.03] py-2.5 text-[9px] font-semibold text-blue-200/60 hover:bg-blue-300/[0.07]">Edit</button>
+                        <button type="button" onClick={() => deleteOwner(owner)} className="rounded-xl border border-red-300/10 bg-red-300/[0.02] py-2.5 text-[9px] font-semibold text-red-200/50 hover:bg-red-300/[0.06]">Hapus</button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -2428,17 +2462,18 @@ export default function AdminPage() {
                   "Perawatan Terakhir",
                   "Jadwal Berikutnya",
                   "Status",
+                  "Aksi",
                 ]}
               >
                 {motorLoading ? (
                   <tr>
-                    <td colSpan={6} className="px-5 py-10 text-center text-sm text-white/30">
+                    <td colSpan={7} className="px-5 py-10 text-center text-sm text-white/30">
                       Mengambil data motor dari Supabase...
                     </td>
                   </tr>
                 ) : motorRows.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-5 py-10 text-center text-sm text-white/30">
+                    <td colSpan={7} className="px-5 py-10 text-center text-sm text-white/30">
                       Belum ada motor. Klik “+ Tambah Motor” untuk menambahkan.
                     </td>
                   </tr>
@@ -2451,6 +2486,12 @@ export default function AdminPage() {
                       <td className="px-5 py-4 text-white/40">-</td>
                       <td className="px-5 py-4 text-white/40">-</td>
                       <td className="px-5 py-4"><Status text={motor.is_active ? "Ready" : "Inactive"} /></td>
+                      <td className="px-5 py-4">
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => openMotorModal(motor)} className="rounded-lg border border-blue-300/10 px-2.5 py-1.5 text-[9px] font-semibold text-blue-200/60 hover:bg-blue-300/[0.06]">Edit</button>
+                          <button type="button" onClick={() => deleteMotor(motor)} className="rounded-lg border border-red-300/10 px-2.5 py-1.5 text-[9px] font-semibold text-red-200/50 hover:bg-red-300/[0.06]">Hapus</button>
+                        </div>
+                      </td>
                     </tr>
                   ))
                 )}
@@ -2465,7 +2506,7 @@ export default function AdminPage() {
               title="Jadwal"
               description="Atur jadwal perawatan setiap motor."
               button="+ Buat Jadwal"
-              onButtonClick={openScheduleModal}
+              onButtonClick={() => openScheduleModal()}
             >
               {scheduleLoading ? (
                 <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-8 text-center text-sm text-white/30">
@@ -2477,7 +2518,7 @@ export default function AdminPage() {
                   <h3 className="mt-4 text-sm font-semibold">Belum ada jadwal</h3>
                   <p className="mt-2 text-[11px] text-white/25">Buat jadwal pertama untuk mengatur perawatan rutin motor.</p>
                   <button
-                    onClick={openScheduleModal}
+                    onClick={() => openScheduleModal()}
                     disabled={motorRows.length === 0}
                     className="mt-5 rounded-full bg-white px-5 py-2.5 text-[10px] font-semibold text-[#080a0d] transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-40"
                   >
@@ -2502,6 +2543,10 @@ export default function AdminPage() {
                           </div>
                           <p className="mt-2 text-[11px] text-white/30">{item.time} · {item.service_type} · {item.frequency}</p>
                           <p className="mt-1 text-[9px] text-white/20">{motor ? `${motor.brand} ${motor.model} · ${motor.plate_number}` : ""}</p>
+                          <div className="mt-4 flex gap-2">
+                            <button type="button" onClick={() => openScheduleModal(item)} className="rounded-lg border border-blue-300/10 px-3 py-1.5 text-[9px] font-semibold text-blue-200/60 hover:bg-blue-300/[0.06]">Edit</button>
+                            <button type="button" onClick={() => deleteSchedule(item)} className="rounded-lg border border-red-300/10 px-3 py-1.5 text-[9px] font-semibold text-red-200/50 hover:bg-red-300/[0.06]">Hapus</button>
+                          </div>
                         </div>
                       </div>
                     );
@@ -2518,7 +2563,7 @@ export default function AdminPage() {
               title="Perawatan / Cuci"
               description="Catat aktivitas cuci, maintenance, dan hubungkan dengan jadwal."
               button="+ Catat Perawatan"
-              onButtonClick={openMaintenanceModal}
+              onButtonClick={() => openMaintenanceModal()}
             >
               {maintenanceLoading ? (
                 <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-8 text-center text-sm text-white/30">
@@ -2530,7 +2575,7 @@ export default function AdminPage() {
                   <h3 className="mt-4 text-sm font-semibold">Belum ada perawatan</h3>
                   <p className="mt-2 text-[11px] text-white/25">Catat cuci atau maintenance pertama untuk mulai membangun riwayat.</p>
                   <button
-                    onClick={openMaintenanceModal}
+                    onClick={() => openMaintenanceModal()}
                     disabled={motorRows.length === 0}
                     className="mt-5 rounded-full bg-white px-5 py-2.5 text-[10px] font-semibold text-[#080a0d] transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-40"
                   >
@@ -2546,6 +2591,7 @@ export default function AdminPage() {
                     "Jam",
                     "Status",
                     "Catatan",
+                    "Aksi",
                   ]}
                 >
                   {maintenanceRows.map((item) => {
@@ -2557,6 +2603,7 @@ export default function AdminPage() {
                         <td className="px-5 py-4 text-white/40">{item.start_time} — {item.end_time}</td>
                         <td className="px-5 py-4"><Status text={item.status} /></td>
                         <td className="max-w-[280px] px-5 py-4 text-[10px] text-white/30">{item.notes || "-"}</td>
+                        <td className="px-5 py-4"><div className="flex gap-2"><button type="button" onClick={() => openMaintenanceModal(item)} className="rounded-lg border border-blue-300/10 px-2.5 py-1.5 text-[9px] font-semibold text-blue-200/60">Edit</button><button type="button" onClick={() => deleteMaintenance(item)} className="rounded-lg border border-red-300/10 px-2.5 py-1.5 text-[9px] font-semibold text-red-200/50">Hapus</button></div></td>
                       </tr>
                     );
                   })}
@@ -2572,7 +2619,7 @@ export default function AdminPage() {
               title="Pembayaran"
               description="Kelola pembayaran berdasarkan pemilik dan periode."
               button="+ Catat Pembayaran"
-              onButtonClick={openPaymentModal}
+              onButtonClick={() => openPaymentModal()}
             >
               {paymentLoading ? (
                 <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-10 text-center text-sm text-white/30">Mengambil pembayaran dari Supabase...</div>
@@ -2580,10 +2627,10 @@ export default function AdminPage() {
                 <div className="rounded-2xl border border-dashed border-white/[0.09] bg-white/[0.015] p-10 text-center">
                   <p className="text-sm font-semibold">Belum ada pembayaran</p>
                   <p className="mt-1 text-[10px] text-white/25">Catat pembayaran pertama untuk mulai membangun riwayat finance.</p>
-                  <button type="button" onClick={openPaymentModal} className="mt-5 rounded-xl bg-white px-4 py-2.5 text-[10px] font-semibold text-[#080a0d]">+ Catat Pembayaran</button>
+                  <button type="button" onClick={() => openPaymentModal()} className="mt-5 rounded-xl bg-white px-4 py-2.5 text-[10px] font-semibold text-[#080a0d]">+ Catat Pembayaran</button>
                 </div>
               ) : (
-                <DataTable headers={["Tanggal", "Pemilik", "Periode", "Nominal", "Metode", "Status"]}>
+                <DataTable headers={["Tanggal", "Pemilik", "Periode", "Nominal", "Metode", "Status", "Aksi"]}>
                   {paymentRows.map((payment) => (
                     <tr key={payment.id} className="border-t border-white/[0.05]">
                       <td className="px-5 py-4 text-white/40">{payment.paid_at || "-"}</td>
@@ -2592,6 +2639,7 @@ export default function AdminPage() {
                       <td className="px-5 py-4 font-semibold">{formatRupiah(payment.amount)}</td>
                       <td className="px-5 py-4 text-white/40">{payment.payment_method}</td>
                       <td className="px-5 py-4"><Status text={payment.status} /></td>
+                      <td className="px-5 py-4"><div className="flex gap-2"><button type="button" onClick={() => openPaymentModal(payment)} className="rounded-lg border border-blue-300/10 px-2.5 py-1.5 text-[9px] font-semibold text-blue-200/60">Edit</button><button type="button" onClick={() => deletePayment(payment)} className="rounded-lg border border-red-300/10 px-2.5 py-1.5 text-[9px] font-semibold text-red-200/50">Hapus</button></div></td>
                     </tr>
                   ))}
                 </DataTable>
@@ -2646,9 +2694,10 @@ export default function AdminPage() {
                           <button type="button" onClick={() => openStockModal(product, "add")} disabled={!product.track_stock || !product.is_active} className="rounded-xl border border-emerald-300/10 bg-emerald-300/[0.04] py-2.5 text-[9px] font-semibold text-emerald-200/60 hover:bg-emerald-300/[0.08] disabled:cursor-not-allowed disabled:opacity-25">+ Stok</button>
                           <button type="button" onClick={() => openStockModal(product, "subtract")} disabled={!product.track_stock || !product.is_active || product.stock <= 0} className="rounded-xl border border-amber-300/10 bg-amber-300/[0.04] py-2.5 text-[9px] font-semibold text-amber-200/60 hover:bg-amber-300/[0.08] disabled:cursor-not-allowed disabled:opacity-25">− Stok</button>
                         </div>
-                        <div className="mt-2 grid grid-cols-2 gap-2">
+                        <div className="mt-2 grid grid-cols-3 gap-2">
                           <button type="button" onClick={() => openProductModal(product)} className="rounded-xl border border-white/[0.07] py-2.5 text-[9px] font-semibold text-white/40 hover:bg-white/[0.04] hover:text-white">Edit</button>
-                          <button type="button" onClick={() => archiveProduct(product)} disabled={!product.is_active} className="rounded-xl border border-red-300/10 py-2.5 text-[9px] font-semibold text-red-200/40 hover:bg-red-300/[0.05] disabled:cursor-not-allowed disabled:opacity-25">{product.is_active ? "Arsipkan" : "Diarsipkan"}</button>
+                          <button type="button" onClick={() => archiveProduct(product)} disabled={!product.is_active} className="rounded-xl border border-amber-300/10 py-2.5 text-[9px] font-semibold text-amber-200/40 hover:bg-amber-300/[0.05] disabled:cursor-not-allowed disabled:opacity-25">{product.is_active ? "Arsip" : "Arsip"}</button>
+                          <button type="button" onClick={() => deleteProduct(product)} className="rounded-xl border border-red-300/10 py-2.5 text-[9px] font-semibold text-red-200/50 hover:bg-red-300/[0.05]">Hapus</button>
                         </div>
                       </div>
                     );
@@ -2741,7 +2790,7 @@ export default function AdminPage() {
                 <div className="flex items-start justify-between border-b border-white/[0.07] px-6 py-5">
                   <div>
                     <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-blue-300/60">Garage</p>
-                    <h3 className="mt-1 text-lg font-semibold">Tambah Motor</h3>
+                    <h3 className="mt-1 text-lg font-semibold">{editingMotorId ? "Edit Motor" : "Tambah Motor"}</h3>
                     <p className="mt-1 text-[10px] text-white/25">Hubungkan motor ke pemilik dan simpan ke database MotorCare.</p>
                   </div>
                   <button onClick={closeMotorModal} className="flex h-8 w-8 items-center justify-center rounded-full border border-white/[0.07] text-sm text-white/35 hover:bg-white/[0.05] hover:text-white">×</button>
@@ -2751,6 +2800,7 @@ export default function AdminPage() {
                   <label className="block sm:col-span-2">
                     <span className="mb-2 block text-[9px] font-semibold uppercase tracking-[0.13em] text-white/30">Pemilik *</span>
                     <select value={motorForm.owner_id} onChange={(e) => setMotorForm((c) => ({ ...c, owner_id: e.target.value }))} className="w-full rounded-xl border border-white/[0.08] bg-[#11161d] px-3.5 py-3 text-[11px] text-white outline-none focus:border-blue-400/30">
+                      {motorForm.owner_id && <p className="mt-2 text-[9px] text-white/25">Motor pemilik ini: {motorRows.filter((m) => m.owner_id === motorForm.owner_id && m.id !== editingMotorId).length}/5</p>}
                       <option value="">Pilih pemilik</option>
                       {ownerRows.map((owner) => <option key={owner.id} value={owner.id}>{owner.name}</option>)}
                     </select>
@@ -2767,7 +2817,7 @@ export default function AdminPage() {
                   {motorFormError && <div className="sm:col-span-2 rounded-xl border border-red-400/10 bg-red-400/[0.04] p-3 text-[10px] leading-5 text-red-200/70">{motorFormError}</div>}
                   <div className="sm:col-span-2 flex gap-2 pt-2">
                     <button onClick={closeMotorModal} disabled={motorSaving} className="flex-1 rounded-xl border border-white/[0.08] py-3 text-[10px] font-semibold text-white/40 hover:bg-white/[0.04] hover:text-white disabled:opacity-40">Batal</button>
-                    <button onClick={saveMotor} disabled={motorSaving || ownerRows.length === 0} className="flex-1 rounded-xl bg-white py-3 text-[10px] font-semibold text-[#080a0d] transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50">{motorSaving ? "Menyimpan..." : "Simpan Motor"}</button>
+                    <button onClick={saveMotor} disabled={motorSaving || ownerRows.length === 0} className="flex-1 rounded-xl bg-white py-3 text-[10px] font-semibold text-[#080a0d] transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50">{motorSaving ? "Menyimpan..." : editingMotorId ? "Simpan Perubahan" : "Simpan Motor"}</button>
                   </div>
                 </div>
               </div>
@@ -2782,7 +2832,7 @@ export default function AdminPage() {
                 <div className="flex items-start justify-between border-b border-white/[0.07] px-6 py-5">
                   <div>
                     <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-blue-300/60">Maintenance</p>
-                    <h3 className="mt-1 text-lg font-semibold">Catat Perawatan</h3>
+                    <h3 className="mt-1 text-lg font-semibold">{editingMaintenanceId ? "Edit Perawatan" : "Catat Perawatan"}</h3>
                     <p className="mt-1 text-[10px] text-white/25">Simpan aktivitas cuci atau maintenance ke database.</p>
                   </div>
                   <button onClick={closeMaintenanceModal} className="flex h-8 w-8 items-center justify-center rounded-full border border-white/[0.07] text-sm text-white/35 hover:bg-white/[0.05] hover:text-white">×</button>
@@ -2863,7 +2913,7 @@ export default function AdminPage() {
 
                   <div className="flex gap-2 pt-2">
                     <button onClick={closeMaintenanceModal} disabled={maintenanceSaving} className="flex-1 rounded-xl border border-white/[0.08] py-3 text-[10px] font-semibold text-white/40 hover:bg-white/[0.04] hover:text-white disabled:opacity-40">Batal</button>
-                    <button onClick={saveMaintenance} disabled={maintenanceSaving || motorRows.length === 0} className="flex-1 rounded-xl bg-white py-3 text-[10px] font-semibold text-[#080a0d] transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50">{maintenanceSaving ? "Menyimpan..." : "Simpan Perawatan"}</button>
+                    <button onClick={saveMaintenance} disabled={maintenanceSaving || motorRows.length === 0} className="flex-1 rounded-xl bg-white py-3 text-[10px] font-semibold text-[#080a0d] transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50">{maintenanceSaving ? "Menyimpan..." : editingMaintenanceId ? "Simpan Perubahan" : "Simpan Perawatan"}</button>
                   </div>
                 </div>
               </div>
@@ -2878,7 +2928,7 @@ export default function AdminPage() {
                 <div className="flex items-start justify-between border-b border-white/[0.07] px-6 py-5">
                   <div>
                     <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-blue-300/60">Schedule</p>
-                    <h3 className="mt-1 text-lg font-semibold">Buat Jadwal</h3>
+                    <h3 className="mt-1 text-lg font-semibold">{editingScheduleId ? "Edit Jadwal" : "Buat Jadwal"}</h3>
                     <p className="mt-1 text-[10px] text-white/25">Jadwal disimpan langsung ke database MotorCare.</p>
                   </div>
                   <button onClick={closeScheduleModal} className="flex h-8 w-8 items-center justify-center rounded-full border border-white/[0.07] text-sm text-white/35 hover:bg-white/[0.05] hover:text-white">×</button>
@@ -2931,7 +2981,7 @@ export default function AdminPage() {
 
                   <div className="flex gap-2 pt-2">
                     <button onClick={closeScheduleModal} disabled={scheduleSaving} className="flex-1 rounded-xl border border-white/[0.08] py-3 text-[10px] font-semibold text-white/40 hover:bg-white/[0.04] hover:text-white disabled:opacity-40">Batal</button>
-                    <button onClick={saveSchedule} disabled={scheduleSaving || motorRows.length === 0} className="flex-1 rounded-xl bg-white py-3 text-[10px] font-semibold text-[#080a0d] transition hover:bg-blue-100 disabled:cursor-wait disabled:opacity-60">{scheduleSaving ? "Menyimpan..." : "Simpan Jadwal"}</button>
+                    <button onClick={saveSchedule} disabled={scheduleSaving || motorRows.length === 0} className="flex-1 rounded-xl bg-white py-3 text-[10px] font-semibold text-[#080a0d] transition hover:bg-blue-100 disabled:cursor-wait disabled:opacity-60">{scheduleSaving ? "Menyimpan..." : editingScheduleId ? "Simpan Perubahan" : "Simpan Jadwal"}</button>
                   </div>
                 </div>
               </div>
@@ -2944,7 +2994,7 @@ export default function AdminPage() {
               <button aria-label="Close payment modal" onClick={closePaymentModal} className="absolute inset-0 cursor-default" />
               <div className="relative z-10 w-full max-w-[560px] overflow-hidden rounded-[28px] border border-white/[0.09] bg-[#0b0f14] shadow-2xl">
                 <div className="flex items-start justify-between border-b border-white/[0.07] px-6 py-5">
-                  <div><p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-blue-300/60">Finance</p><h3 className="mt-1 text-lg font-semibold">Catat Pembayaran</h3><p className="mt-1 text-[10px] text-white/25">Data pembayaran tersimpan di Supabase.</p></div>
+                  <div><p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-blue-300/60">Finance</p><h3 className="mt-1 text-lg font-semibold">{editingPaymentId ? "Edit Pembayaran" : "Catat Pembayaran"}</h3><p className="mt-1 text-[10px] text-white/25">Data pembayaran tersimpan di Supabase.</p></div>
                   <button onClick={closePaymentModal} className="flex h-8 w-8 items-center justify-center rounded-full border border-white/[0.07] text-sm text-white/35 hover:bg-white/[0.05] hover:text-white">×</button>
                 </div>
                 <div className="space-y-4 p-6">
@@ -2954,7 +3004,7 @@ export default function AdminPage() {
                   {paymentForm.status === "Paid" && <FormField label="Tanggal bayar" value={paymentForm.paid_at} placeholder="2026-09-14" onChange={(value) => setPaymentForm((c) => ({...c, paid_at:value}))} />}
                   <FormField label="Catatan admin (private)" value={paymentForm.admin_notes} placeholder="Catatan internal..." textarea onChange={(value) => setPaymentForm((c) => ({...c, admin_notes:value}))} />
                   {paymentFormError && <div className="rounded-xl border border-red-400/10 bg-red-400/[0.04] p-3 text-[10px] leading-5 text-red-200/70">{paymentFormError}</div>}
-                  <div className="flex gap-2 pt-2"><button onClick={closePaymentModal} disabled={paymentSaving} className="flex-1 rounded-xl border border-white/[0.08] py-3 text-[10px] font-semibold text-white/40">Batal</button><button onClick={savePayment} disabled={paymentSaving || ownerRows.length===0} className="flex-1 rounded-xl bg-white py-3 text-[10px] font-semibold text-[#080a0d] disabled:opacity-50">{paymentSaving ? "Menyimpan..." : "Simpan Pembayaran"}</button></div>
+                  <div className="flex gap-2 pt-2"><button onClick={closePaymentModal} disabled={paymentSaving} className="flex-1 rounded-xl border border-white/[0.08] py-3 text-[10px] font-semibold text-white/40">Batal</button><button onClick={savePayment} disabled={paymentSaving || ownerRows.length===0} className="flex-1 rounded-xl bg-white py-3 text-[10px] font-semibold text-[#080a0d] disabled:opacity-50">{paymentSaving ? "Menyimpan..." : editingPaymentId ? "Simpan Perubahan" : "Simpan Pembayaran"}</button></div>
                 </div>
               </div>
             </div>
@@ -3248,7 +3298,7 @@ export default function AdminPage() {
                       disabled={ownerSaving}
                       className="flex-1 rounded-xl bg-white py-3 text-[10px] font-semibold text-[#080a0d] transition hover:bg-blue-100 disabled:cursor-wait disabled:opacity-60"
                     >
-                      {ownerSaving ? "Menyimpan..." : "Simpan Pemilik"}
+                      {ownerSaving ? "Menyimpan..." : editingOwnerId ? "Simpan Perubahan" : "Simpan Pemilik"}
                     </button>
                   </div>
                 </div>
