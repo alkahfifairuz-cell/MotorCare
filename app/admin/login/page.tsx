@@ -1,146 +1,139 @@
 "use client";
 
-import Image from "next/image";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 export default function AdminLoginPage() {
   const router = useRouter();
+  const supabase = createClient();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  async function handleLogin(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function handleLogin(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
 
-    setError("");
     setLoading(true);
+    setError("");
 
-    try {
-      const supabase = createClient();
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
 
-      const { error: loginError } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
-
-      if (loginError) {
-        setError(loginError.message);
-        return;
-      }
-
-      router.replace("/admin");
-      router.refresh();
-    } catch (err) {
-      console.error(err);
-      setError("Terjadi kesalahan saat menghubungkan ke server.");
-    } finally {
+    if (error) {
+      setError("Email atau password salah.");
       setLoading(false);
+      return;
     }
+
+    router.replace("/admin");
+    router.refresh();
   }
 
   return (
-    <main className="min-h-screen bg-[#07090c] text-white">
-      <div className="flex min-h-screen items-center justify-center px-5 py-10">
-        <div className="w-full max-w-md">
-          <div className="mb-8 text-center">
-            <div className="mx-auto mb-6 flex justify-center">
-              <Image
-                src="/motorcare-logo.png"
-                alt="MotorCare"
-                width={180}
-                height={180}
-                className="h-auto w-[150px] object-contain"
-                priority
-              />
-            </div>
+    <main className="min-h-screen bg-[#07090c] text-white flex items-center justify-center px-5">
+      <div className="w-full max-w-md">
 
-            <p className="mb-2 text-xs font-medium uppercase tracking-[0.35em] text-blue-400">
+        {/* LOGO */}
+        <div className="flex justify-center mb-8">
+          <img
+            src="/motorcare-logo.png"
+            alt="MotorCare"
+            className="w-44 h-auto object-contain"
+          />
+        </div>
+
+        {/* CARD */}
+        <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-7 sm:p-9 shadow-2xl shadow-black/30">
+
+          <div className="mb-8">
+            <p className="text-[11px] uppercase tracking-[0.28em] text-blue-400 font-semibold mb-3">
               MotorCare Admin
             </p>
 
-            <h1 className="text-3xl font-semibold tracking-tight">
-              Welcome back.
+            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">
+              Selamat datang kembali.
             </h1>
 
-            <p className="mt-3 text-sm leading-6 text-white/50">
-              Login untuk mengelola MotorCare.
+            <p className="text-sm text-white/45 mt-2 leading-relaxed">
+              Login untuk mengelola pemilik, motor, jadwal, pembayaran,
+              perawatan, dan inventaris.
             </p>
           </div>
 
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/30 backdrop-blur-xl sm:p-8">
-            <form onSubmit={handleLogin} className="space-y-5">
-              <div>
-                <label
-                  htmlFor="email"
-                  className="mb-2 block text-sm font-medium text-white/80"
-                >
-                  Email
-                </label>
+          <form onSubmit={handleLogin} className="space-y-5">
 
-                <input
-                  id="email"
-                  type="email"
-                  autoComplete="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="admin@motorcare.com"
-                  required
-                  className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3.5 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-blue-400/50 focus:bg-black/30"
-                />
-              </div>
+            {/* EMAIL */}
+            <div>
+              <label className="block text-xs font-medium text-white/65 mb-2">
+                Email Admin
+              </label>
 
-              <div>
-                <label
-                  htmlFor="password"
-                  className="mb-2 block text-sm font-medium text-white/80"
-                >
-                  Password
-                </label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="admin@email.com"
+                required
+                autoComplete="email"
+                className="w-full h-12 rounded-xl border border-white/10 bg-black/25 px-4 text-sm text-white placeholder:text-white/25 outline-none transition focus:border-blue-400/50 focus:bg-white/[0.045]"
+              />
+            </div>
 
-                <input
-                  id="password"
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder="••••••••"
-                  required
-                  className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3.5 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-blue-400/50 focus:bg-black/30"
-                />
-              </div>
+            {/* PASSWORD */}
+            <div>
+              <label className="block text-xs font-medium text-white/65 mb-2">
+                Password
+              </label>
 
-              {error && (
-                <div className="rounded-2xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-sm leading-5 text-red-300">
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Masukkan password"
+                required
+                autoComplete="current-password"
+                className="w-full h-12 rounded-xl border border-white/10 bg-black/25 px-4 text-sm text-white placeholder:text-white/25 outline-none transition focus:border-blue-400/50 focus:bg-white/[0.045]"
+              />
+            </div>
+
+            {/* ERROR */}
+            {error && (
+              <div className="rounded-xl border border-red-400/15 bg-red-400/5 px-4 py-3">
+                <p className="text-sm text-red-300">
                   {error}
-                </div>
-              )}
+                </p>
+              </div>
+            )}
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full rounded-2xl bg-white px-4 py-3.5 text-sm font-semibold text-black transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {loading ? "Signing in..." : "Login"}
-              </button>
-            </form>
+            {/* BUTTON */}
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full h-12 rounded-xl bg-blue-500 hover:bg-blue-400 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-semibold text-white transition shadow-lg shadow-blue-500/10"
+            >
+              {loading ? "Memproses..." : "Login ke Admin"}
+            </button>
+          </form>
 
+          <div className="mt-7 pt-6 border-t border-white/8">
             <button
               type="button"
               onClick={() => router.push("/")}
-              className="mt-5 w-full text-center text-sm text-white/40 transition hover:text-white/70"
+              className="w-full text-sm text-white/40 hover:text-white/70 transition"
             >
               ← Kembali ke website
             </button>
           </div>
-
-          <p className="mt-6 text-center text-xs text-white/25">
-            MotorCare • Clean Ride • Better Journey
-          </p>
         </div>
+
+        <p className="text-center text-[11px] text-white/20 mt-6">
+          MotorCare • Admin Area
+        </p>
       </div>
     </main>
   );
